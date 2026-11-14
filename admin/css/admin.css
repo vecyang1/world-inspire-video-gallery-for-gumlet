@@ -356,6 +356,10 @@
 	font-size: 12px;
 }
 
+.wivg-color-input {
+	width: 110px;
+}
+
 .wivg-field {
 	margin-bottom: 12px;
 }

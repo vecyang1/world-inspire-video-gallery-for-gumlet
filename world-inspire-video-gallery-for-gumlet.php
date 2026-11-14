@@ -481,7 +481,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		public static function render_field_accent_color() {
 			$cfg = self::get_settings();
 			printf(
-				'<input type="text" id="wivg_accent_color" name="%1$s[accent_color]" value="%2$s" class="small-text code" placeholder="#FF5500" />',
+				'<input type="text" id="wivg_accent_color" name="%1$s[accent_color]" value="%2$s" class="code wivg-color-input" placeholder="#FF5500" />',
 				esc_attr( self::OPT_SETTINGS ),
 				esc_attr( $cfg['accent_color'] )
 			);

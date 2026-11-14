@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner-1544x500.png" alt="World Inspire Video Gallery for Gumlet Banner" width="100%">
+</p>
+
 # World Inspire Video Gallery for Gumlet
 
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)](LICENSE)
@@ -15,6 +19,16 @@ Privacy-first external product video gallery manager for WordPress storefronts. 
 - **Settings API & Constant Isolation (`Settings -> External Video Gallery`)**: Standard WordPress options management supporting `WIVG_GUMLET_API_KEY` in `wp-config.php`.
 - **Authenticated REST API (`/wp-json/world-inspire-video-gallery/v1/*`)**: Minimal public `/status` health endpoint plus capability-gated `/audit`, `/probe`, `/create`, `/insert`, `/arrange`, `/batch`, `/settings`, and `/gumlet/*` routes.
 
+## Screenshots
+
+| 1. Product Gallery Slot Arranger | 2. Probe, Register & Direct Upload |
+| --- | --- |
+| ![Slot Arranger](assets/screenshot-1.png) | ![Probe and Direct Upload](assets/screenshot-2.png) |
+
+| 3. Asset Inventory | 4. WordPress Settings API |
+| --- | --- |
+| ![Asset Inventory](assets/screenshot-3.png) | ![Plugin Settings](assets/screenshot-4.png) |
+
 ## Project Structure
 
 ```text
@@ -31,6 +45,15 @@ world-inspire-video-gallery-for-gumlet/
 ├── public/
 │   └── css/frontend.css
 ├── assets/
+│   ├── banner-772x250.png
+│   ├── banner-1544x500.png
+│   ├── icon-128x128.png
+│   ├── icon-256x256.png
+│   ├── icon.svg
+│   ├── screenshot-1.png
+│   ├── screenshot-2.png
+│   ├── screenshot-3.png
+│   └── screenshot-4.png
 └── tests/
     ├── __init__.py
     ├── test_mock_e2e.php
