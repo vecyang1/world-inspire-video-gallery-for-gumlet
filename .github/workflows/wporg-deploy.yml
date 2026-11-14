@@ -1,0 +1,33 @@
+name: Deploy to WordPress.org
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to deploy to WordPress.org SVN (after directory approval)'
+        required: false
+
+concurrency:
+  group: wporg-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wporg-deploy:
+    name: WP.org Preflight & SVN Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Official WordPress Plugin Check (PCP)
+        uses: wordpress/plugin-check-action@v1
+        with:
+          exclude-directories: 'tests,assets'
+
+      - name: Deploy to WordPress.org SVN
+        uses: 10up/action-wordpress-plugin-deploy@stable
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: world-inspire-video-gallery-for-gumlet
+          ASSETS_DIR: assets

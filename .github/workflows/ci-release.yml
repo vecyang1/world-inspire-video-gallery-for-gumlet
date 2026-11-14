@@ -1,0 +1,96 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint, Contract & Plugin Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.1', '8.3']
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run PHP Syntax Check
+        run: |
+          php -l world-inspire-video-gallery-for-gumlet.php
+          php -l uninstall.php
+          php -l tests/test_mock_e2e.php
+
+      - name: Run Contract & Mock E2E Tests
+        run: python3 -m unittest tests/test_plugin_contract.py -v
+
+  plugin-check:
+    name: Official WordPress Plugin Check (PCP)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run WordPress Plugin Check
+        uses: wordpress/plugin-check-action@v1
+        with:
+          exclude-directories: 'tests,assets'
+
+  build-and-release:
+    name: Build & Release Package
+    needs: [lint-and-test, plugin-check]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Package WordPress.org Plugin ZIP
+        run: |
+          mkdir -p build/world-inspire-video-gallery-for-gumlet
+          cp world-inspire-video-gallery-for-gumlet.php build/world-inspire-video-gallery-for-gumlet/
+          cp uninstall.php build/world-inspire-video-gallery-for-gumlet/
+          cp readme.txt build/world-inspire-video-gallery-for-gumlet/
+          cp LICENSE build/world-inspire-video-gallery-for-gumlet/
+          cp -r admin build/world-inspire-video-gallery-for-gumlet/
+          cp -r public build/world-inspire-video-gallery-for-gumlet/
+          cd build
+          zip -r ../world-inspire-video-gallery-for-gumlet.zip world-inspire-video-gallery-for-gumlet
+          cd ..
+          ls -lh world-inspire-video-gallery-for-gumlet.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: world-inspire-video-gallery-for-gumlet.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
