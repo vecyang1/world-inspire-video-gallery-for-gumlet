@@ -127,16 +127,13 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		}
 
 		/**
-		 * Enqueue lightweight frontend gallery CSS on standard WooCommerce product pages.
+		 * Register lightweight frontend gallery CSS (enqueued lazily only when a video slide renders).
 		 */
 		public static function enqueue_frontend_assets() {
 			if ( 'woocommerce_standard' !== self::detect_adapter() ) {
 				return;
 			}
-			if ( function_exists( 'is_product' ) && ! is_product() ) {
-				return;
-			}
-			wp_enqueue_style(
+			wp_register_style(
 				'wivg-frontend',
 				plugins_url( 'public/css/frontend.css', __FILE__ ),
 				array(),
@@ -1010,6 +1007,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 
 			if ( '' === $player_html ) {
 				return $html;
+			}
+			if ( function_exists( 'wp_enqueue_style' ) ) {
+				wp_enqueue_style( 'wivg-frontend' );
 			}
 			if ( preg_match( '#^(<div[^>]*woocommerce-product-gallery__image[^>]*>).*(</div>)\s*$#is', (string) $html, $m ) ) {
 				$open_div = str_replace( 'woocommerce-product-gallery__image', 'woocommerce-product-gallery__image wivg-has-video', $m[1] );

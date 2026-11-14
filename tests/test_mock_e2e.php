@@ -161,8 +161,11 @@ function register_rest_route( $ns, $route, $args ) {
 function wp_create_nonce( $action = -1 ) {
 	return 'nonce_' . $action;
 }
+function wp_register_style( $handle, $src = '', $deps = array(), $ver = false ) {
+	$GLOBALS['wivg_test_styles'][ $handle . '_registered' ] = $src;
+}
 function wp_enqueue_style( $handle, $src = '', $deps = array(), $ver = false ) {
-	$GLOBALS['wivg_test_styles'][ $handle ] = $src;
+	$GLOBALS['wivg_test_styles'][ $handle ] = $src ?: ( $GLOBALS['wivg_test_styles'][ $handle . '_registered' ] ?? 'enqueued' );
 }
 function wp_add_inline_style( $handle, $data ) {
 	$GLOBALS['wivg_test_styles'][ $handle . '_inline' ] = $data;

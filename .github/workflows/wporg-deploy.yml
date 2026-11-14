@@ -22,7 +22,8 @@ jobs:
       - name: Run Official WordPress Plugin Check (PCP)
         uses: wordpress/plugin-check-action@v1
         with:
-          exclude-directories: 'tests,assets'
+          exclude-directories: 'tests,assets,.github,.git,build'
+          exclude-files: '.distignore,.gitignore,CHANGELOG.md,README.md'
 
       - name: Deploy to WordPress.org SVN
         uses: 10up/action-wordpress-plugin-deploy@stable
