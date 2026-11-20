@@ -8,6 +8,10 @@ assets/
 
 # Testing & build tooling
 tests/
+.pytest_cache/
+__pycache__/
+.DS_Store
+graphify-out/
 phpunit.xml
 composer.json
 composer.lock

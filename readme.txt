@@ -5,7 +5,7 @@ Tags: video gallery, gumlet, woocommerce video, surecart, youtube nocookie
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.0.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -83,6 +83,9 @@ This plugin does not connect to any external service automatically on frontend p
 4. Plugin Settings (`Settings > External Video Gallery`): Configure Gumlet Workspace ID, API Key (with `WIVG_GUMLET_API_KEY` wp-config.php constant support), default slot, and Privacy-Enhanced Mode.
 
 == Changelog ==
+
+= 1.0.1 =
+* Security: Enforce `manage_options` capability across all administrative and mutating REST endpoints and admin screens, add per-object `edit_post`/`read_post` checks on product and attachment mutations, validate numeric attachment inputs strictly against accessible video attachments, and harden REST/AJAX payload type safety.
 
 = 1.0.0 =
 * Initial public open-source release on WordPress.org and GitHub.

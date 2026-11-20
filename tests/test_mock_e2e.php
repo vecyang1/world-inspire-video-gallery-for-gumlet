@@ -21,10 +21,11 @@ $GLOBALS['wivg_test_scripts']  = array();
 $GLOBALS['wivg_test_settings'] = array();
 $GLOBALS['wivg_test_template'] = 'woodmart';
 $GLOBALS['wivg_test_sc']       = false;
-$GLOBALS['wivg_test_caps']     = array(
+$GLOBALS['wivg_test_caps']      = array(
 	'upload_files'   => true,
 	'manage_options' => true,
 );
+$GLOBALS['wivg_test_post_caps'] = array();
 
 class WP_Error {
 	public $code;
@@ -144,8 +145,30 @@ function esc_html__( $text, $domain = 'default' ) {
 function esc_attr__( $text, $domain = 'default' ) {
 	return esc_attr( $text );
 }
-function current_user_can( $cap ) {
+function current_user_can( $cap, ...$args ) {
+	if ( in_array( $cap, array( 'read_post', 'edit_post' ), true ) ) {
+		$pid = isset( $args[0] ) ? (int) $args[0] : 0;
+		if ( $pid > 0 && isset( $GLOBALS['wivg_test_post_caps'][ $pid ][ $cap ] ) ) {
+			return (bool) $GLOBALS['wivg_test_post_caps'][ $pid ][ $cap ];
+		}
+		if ( array_key_exists( $cap, $GLOBALS['wivg_test_caps'] ) ) {
+			return ! empty( $GLOBALS['wivg_test_caps'][ $cap ] );
+		}
+		return ! empty( $GLOBALS['wivg_test_caps']['manage_options'] );
+	}
 	return ! empty( $GLOBALS['wivg_test_caps'][ $cap ] );
+}
+function get_post_status( $id ) {
+	$p = $GLOBALS['wivg_test_posts'][ (int) $id ] ?? null;
+	return $p ? ( $p->post_status ?? 'publish' ) : false;
+}
+function get_post_type( $id ) {
+	$p = $GLOBALS['wivg_test_posts'][ (int) $id ] ?? null;
+	return $p ? ( $p->post_type ?? '' ) : false;
+}
+function wp_nonce_url( $actionurl, $action = -1, $name = '_wpnonce' ) {
+	$sep = false === strpos( $actionurl, '?' ) ? '?' : '&';
+	return $actionurl . $sep . $name . '=nonce_' . $action;
 }
 function register_setting( $group, $name, $args = array() ) {
 	$GLOBALS['wivg_test_settings'][ $name ] = $args;
@@ -473,24 +496,122 @@ $sc_ins = World_Inspire_Video_Gallery::insert_product_video(
 );
 wivg_assert( $sc_ins['ok'] && 2 === $sc_ins['product']['slots'][1]['slot'] && 'gumlet' === $sc_ins['product']['slots'][1]['video']['source_type'], 'SureCart gallery inserts Gumlet video at Slot #2' );
 
-// 8. REST API routes & minimal public /status check
+// 8. REST API routes, capability gates & object-level authorization checks
 $GLOBALS['wivg_test_template'] = 'woodmart';
 $GLOBALS['wivg_test_sc']       = false;
 World_Inspire_Video_Gallery::register_rest_routes();
 $status_route = $GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/status'] ?? null;
 wivg_assert( is_array( $status_route ), '/status route registered' );
 $status_resp = call_user_func( $status_route['callback'] );
-wivg_assert( isset( $status_resp->data['enabled'] ) && ! isset( $status_resp->data['site'] ), 'Public /status exposes minimal health only (no config leak)' );
+wivg_assert( isset( $status_resp->data['enabled'] ) && '1.0.1' === $status_resp->data['version'] && ! isset( $status_resp->data['site'] ), 'Public /status exposes minimal health only (no config leak)' );
 
-$audit_route = $GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/audit'] ?? null;
-$GLOBALS['wivg_test_caps']['upload_files'] = false;
-wivg_assert( false === call_user_func( $audit_route['permission_callback'] ), '/audit blocks unauthenticated users' );
-$GLOBALS['wivg_test_caps']['upload_files'] = true;
-wivg_assert( true === call_user_func( $audit_route['permission_callback'] ), '/audit allows upload_files capability' );
+// Author-level user (upload_files = true, manage_options = false) MUST be blocked from all protected endpoints
+$GLOBALS['wivg_test_caps']['upload_files']   = true;
+$GLOBALS['wivg_test_caps']['manage_options'] = false;
+foreach ( array( '/audit', '/probe', '/create', '/insert', '/arrange', '/batch', '/settings', '/gumlet/upload-session', '/gumlet/status' ) as $protected_ep ) {
+	$route = $GLOBALS['wivg_test_rest'][ 'world-inspire-video-gallery/v1' . $protected_ep ] ?? null;
+	wivg_assert( is_array( $route ), "{$protected_ep} route registered" );
+	wivg_assert( false === call_user_func( $route['permission_callback'] ), "{$protected_ep} rejects upload_files-only users" );
+}
+$GLOBALS['wivg_test_caps']['manage_options'] = true;
+foreach ( array( '/audit', '/probe', '/create', '/insert', '/arrange', '/batch', '/settings', '/gumlet/upload-session', '/gumlet/status' ) as $protected_ep ) {
+	$route = $GLOBALS['wivg_test_rest'][ 'world-inspire-video-gallery/v1' . $protected_ep ] ?? null;
+	wivg_assert( true === call_user_func( $route['permission_callback'] ), "{$protected_ep} allows manage_options admins" );
+}
 
-// 9. Asset enqueuing only on target admin screens
+// Numeric input IDOR defense: arbitrary non-attachment draft post must NOT leak title or succeed
+$secret_draft                 = new stdClass();
+$secret_draft->ID             = 777;
+$secret_draft->post_type      = 'post';
+$secret_draft->post_status    = 'draft';
+$secret_draft->post_title     = 'Confidential Acquisition Notes';
+$secret_draft->post_name      = 'confidential-acquisition-notes';
+$GLOBALS['wivg_test_posts'][777] = $secret_draft;
+foreach ( array( '777', '#777', 'wp:777' ) as $idor_in ) {
+	$probe_route = $GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/probe'];
+	$probe_res   = call_user_func( $probe_route['callback'], new WP_REST_Request_Mock( array( 'input' => $idor_in ) ) );
+	wivg_assert( is_wp_error( $probe_res ), "Numeric non-attachment input {$idor_in} rejected by /probe" );
+	wivg_assert( false === strpos( $probe_res->get_error_message(), 'Confidential' ), "Numeric input {$idor_in} does not leak post title" );
+}
+
+// Inaccessible video attachment (read_post => false) must NOT be exposed by /probe or /audit
+$priv_vid                 = new stdClass();
+$priv_vid->ID             = 778;
+$priv_vid->post_type      = 'attachment';
+$priv_vid->post_status    = 'inherit';
+$priv_vid->post_mime_type = 'video/mp4';
+$priv_vid->post_title     = 'Private Executive Clip';
+$priv_vid->post_name      = 'private-executive-clip';
+$priv_vid->post_parent    = 0;
+$priv_vid->post_date      = '2026-11-20 00:00:00';
+$GLOBALS['wivg_test_posts'][778]                = $priv_vid;
+$GLOBALS['wivg_test_post_caps'][778]['read_post'] = false;
+$GLOBALS['wivg_test_post_caps'][778]['edit_post'] = false;
+$priv_probe = call_user_func( $GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/probe']['callback'], new WP_REST_Request_Mock( array( 'input' => '778' ) ) );
+wivg_assert( is_wp_error( $priv_probe ), 'Inaccessible attachment rejected by /probe' );
+
+// Draft product without read_post must be filtered out of /audit
+$draft_prod                 = new stdClass();
+$draft_prod->ID             = 102;
+$draft_prod->post_type      = 'product';
+$draft_prod->post_status    = 'draft';
+$draft_prod->post_title     = 'Unreleased Secret SKU';
+$draft_prod->post_name      = 'unreleased-secret-sku';
+$draft_prod->post_date      = '2026-11-20 00:00:00';
+$GLOBALS['wivg_test_posts'][102]                  = $draft_prod;
+$GLOBALS['wivg_test_post_caps'][102]['read_post'] = false;
+$GLOBALS['wivg_test_post_caps'][102]['edit_post'] = false;
+$audit_resp = call_user_func( $GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/audit']['callback'] );
+$audit_pids = array_map( function ( $x ) { return $x['id']; }, $audit_resp->data['products'] );
+wivg_assert( ! in_array( 102, $audit_pids, true ), 'Unreadable draft product excluded from /audit report' );
+
+// Object-level edit_post check on /insert, /arrange, and /create (updating existing Gumlet attachment)
+$GLOBALS['wivg_test_post_caps'][101]['edit_post'] = false;
+$deny_ins = call_user_func(
+	$GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/insert']['callback'],
+	new WP_REST_Request_Mock( array( 'product_id' => 101, 'video' => $expected_gumlet, 'slot' => 2 ) )
+);
+wivg_assert( is_wp_error( $deny_ins ) && 'wivg_forbidden' === $deny_ins->get_error_code(), '/insert enforces edit_post check on product' );
+
+$deny_arr = call_user_func(
+	$GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/arrange']['callback'],
+	new WP_REST_Request_Mock( array( 'product_id' => 101, 'clear_all_videos' => true ) )
+);
+wivg_assert( is_wp_error( $deny_arr ) && 'wivg_forbidden' === $deny_arr->get_error_code(), '/arrange enforces edit_post check on product' );
+$GLOBALS['wivg_test_post_caps'][101]['edit_post'] = true;
+
+// Non-attachment in slot_order must be rejected
+$bad_slot = call_user_func(
+	$GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/arrange']['callback'],
+	new WP_REST_Request_Mock( array( 'product_id' => 101, 'slot_order' => array( 201, 777 ) ) )
+);
+wivg_assert( is_wp_error( $bad_slot ) && 'wivg_invalid_slot_order' === $bad_slot->get_error_code(), '/arrange rejects non-attachment IDs in slot_order' );
+
+// Updating an existing Gumlet attachment requires edit_post on that attachment
+$GLOBALS['wivg_test_post_caps'][ $att_id ]['edit_post'] = false;
+$deny_create = call_user_func(
+	$GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/create']['callback'],
+	new WP_REST_Request_Mock( array( 'input' => $expected_gumlet, 'title' => 'Hijacked Title' ) )
+);
+wivg_assert( is_wp_error( $deny_create ) && 'wivg_forbidden' === $deny_create->get_error_code(), '/create enforces edit_post when updating an existing Gumlet attachment' );
+$GLOBALS['wivg_test_post_caps'][ $att_id ]['edit_post'] = true;
+
+// Malformed array inputs to REST callbacks must not trigger PHP 8 Array to string conversion warnings
+$arr_probe = call_user_func(
+	$GLOBALS['wivg_test_rest']['world-inspire-video-gallery/v1/probe']['callback'],
+	new WP_REST_Request_Mock( array( 'input' => array( 'nested' => 'bad' ) ) )
+);
+wivg_assert( is_wp_error( $arr_probe ), 'Array-valued REST input fails safely without PHP warning' );
+
+// 9. Asset enqueuing only on target admin screens and only for manage_options users
+$GLOBALS['wivg_test_scripts'] = array();
+$GLOBALS['wivg_test_styles']  = array();
 World_Inspire_Video_Gallery::enqueue_admin_assets( 'edit.php' );
 wivg_assert( empty( $GLOBALS['wivg_test_scripts']['wivg-admin'] ), 'Admin scripts do not load on unrelated screens' );
+$GLOBALS['wivg_test_caps']['manage_options'] = false;
+World_Inspire_Video_Gallery::enqueue_admin_assets( 'media_page_world-inspire-video-gallery' );
+wivg_assert( empty( $GLOBALS['wivg_test_scripts']['wivg-admin'] ), 'Admin scripts do not load for non-admin users' );
+$GLOBALS['wivg_test_caps']['manage_options'] = true;
 World_Inspire_Video_Gallery::enqueue_admin_assets( 'media_page_world-inspire-video-gallery' );
 wivg_assert( ! empty( $GLOBALS['wivg_test_scripts']['wivg-admin'] ) && ! empty( $GLOBALS['wivg_test_styles']['wivg-admin'] ), 'Admin CSS & JS enqueue cleanly on plugin screen' );
 

@@ -72,12 +72,17 @@ class TestPluginContract(unittest.TestCase):
         self.assertIn("=== World Inspire Video Gallery for Gumlet ===", readme)
         self.assertIn("Contributors: hxsmyxh", readme)
         self.assertIn("Tested up to: 7.1", readme)
-        self.assertIn("Stable tag: 1.0.0", readme)
+        self.assertIn("Stable tag: 1.0.1", readme)
+        self.assertIn("Version:           1.0.1", self.php)
         self.assertIn("== External Services ==", readme)
         self.assertIn("youtube-nocookie.com", readme)
 
+        # Ensure REST routes do not downgrade permission_callback to upload_files
+        rest_block = self.php.split("public static function register_rest_routes()")[1].split("public static function render_admin_page()")[0]
+        self.assertNotIn("current_user_can( 'upload_files' )", rest_block)
+
         distignore = (REPO_ROOT / ".distignore").read_text(encoding="utf-8")
-        for pat in (".git/", ".github/", "tests/", "assets/", ".env*"):
+        for pat in (".git/", ".github/", "tests/", ".pytest_cache/", "assets/", ".env*"):
             self.assertIn(pat, distignore)
 
     def test_prefix_length_and_translators_comments(self):

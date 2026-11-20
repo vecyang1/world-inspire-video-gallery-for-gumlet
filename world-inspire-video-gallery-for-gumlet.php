@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       World Inspire Video Gallery for Gumlet
  * Plugin URI:        https://github.com/vecyang1/world-inspire-video-gallery-for-gumlet
- * Description:       Privacy-first product video gallery manager supporting Gumlet CDN direct MP4 uploads, YouTube (youtube-nocookie), and Vimeo across WooCommerce and SureCart with zero local video storage.
- * Version:           1.0.0
+ * Description:       Privacy-first external product video gallery manager supporting Gumlet CDN direct MP4 uploads, YouTube (youtube-nocookie), and Vimeo across WooCommerce and SureCart with zero local video storage.
+ * Version:           1.0.1
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            World Inspire
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 	class World_Inspire_Video_Gallery {
-		const VERSION            = '1.0.0';
+		const VERSION            = '1.0.1';
 		const REST_NAMESPACE     = 'world-inspire-video-gallery/v1';
 		const ADMIN_SLUG         = 'world-inspire-video-gallery';
 		const SETTINGS_SLUG      = 'world-inspire-video-gallery-settings';
@@ -31,6 +31,73 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		const META_YT_POSTER_FOR = '_wivg_youtube_poster_for';
 		const META_STD_WC_VIDEOS = '_wivg_product_video_gallery';
 		const GUMLET_HOST        = 'video.gumlet.io';
+
+		/**
+		 * Safely coerce scalar values to string without triggering PHP 8 array-to-string warnings.
+		 *
+		 * @param mixed  $val     Raw input value.
+		 * @param string $default Fallback string.
+		 * @return string
+		 */
+		private static function scalar_str( $val, $default = '' ) {
+			return is_scalar( $val ) ? (string) $val : $default;
+		}
+
+		/**
+		 * Verify whether the current user can read or inspect a specific post/attachment.
+		 *
+		 * @param int $post_id Target post ID.
+		 * @return bool
+		 */
+		public static function current_user_can_read_post( $post_id ) {
+			$post_id = absint( $post_id );
+			if ( $post_id <= 0 || ! function_exists( 'current_user_can' ) ) {
+				return false;
+			}
+			return current_user_can( 'read_post', $post_id ) || current_user_can( 'edit_post', $post_id );
+		}
+
+		/**
+		 * Verify whether the current user can modify a specific post, product, or attachment.
+		 *
+		 * @param int $post_id Target post ID.
+		 * @return bool
+		 */
+		public static function current_user_can_edit_post( $post_id ) {
+			$post_id = absint( $post_id );
+			if ( $post_id <= 0 || ! function_exists( 'current_user_can' ) ) {
+				return false;
+			}
+			return current_user_can( 'edit_post', $post_id );
+		}
+
+		/**
+		 * Verify that an ID points to a non-trashed attachment readable by the current user.
+		 *
+		 * @param int    $attachment_id Attachment post ID.
+		 * @param string $mime_prefix   Optional required MIME prefix (e.g. 'image/' or 'video/').
+		 * @return bool
+		 */
+		private static function is_accessible_attachment( $attachment_id, $mime_prefix = '' ) {
+			$attachment_id = absint( $attachment_id );
+			if ( $attachment_id <= 0 || ! function_exists( 'get_post' ) ) {
+				return false;
+			}
+			$att = get_post( $attachment_id );
+			if ( ! $att || 'attachment' !== ( $att->post_type ?? '' ) || 'trash' === ( $att->post_status ?? '' ) ) {
+				return false;
+			}
+			if ( ! self::current_user_can_read_post( $attachment_id ) ) {
+				return false;
+			}
+			if ( '' !== $mime_prefix ) {
+				$mime = (string) ( $att->post_mime_type ?? '' );
+				if ( '' === $mime || 0 !== strpos( $mime, $mime_prefix ) ) {
+					return false;
+				}
+			}
+			return true;
+		}
 
 		/**
 		 * Register plugin hooks.
@@ -60,6 +127,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			$settings_hook = 'settings_page_' . self::SETTINGS_SLUG;
 
 			if ( $media_hook !== $hook_suffix && $settings_hook !== $hook_suffix ) {
+				return;
+			}
+			if ( ! function_exists( 'current_user_can' ) || ! current_user_can( 'manage_options' ) ) {
 				return;
 			}
 
@@ -150,6 +220,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		public static function add_plugin_action_links( $links ) {
 			if ( ! is_array( $links ) ) {
 				$links = array();
+			}
+			if ( ! function_exists( 'current_user_can' ) || ! current_user_can( 'manage_options' ) ) {
+				return $links;
 			}
 			$settings_link = '<a href="' . esc_url( admin_url( 'options-general.php?page=' . self::SETTINGS_SLUG ) ) . '">'
 				. esc_html__( 'Settings', 'world-inspire-video-gallery-for-gumlet' )
@@ -357,14 +430,14 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 
 			$clean = array();
 
-			$ws = isset( $input['gumlet_workspace_id'] ) ? strtolower( trim( sanitize_text_field( (string) $input['gumlet_workspace_id'] ) ) ) : '';
+			$ws = isset( $input['gumlet_workspace_id'] ) ? strtolower( trim( sanitize_text_field( self::scalar_str( $input['gumlet_workspace_id'] ) ) ) ) : '';
 			if ( '' === $ws ) {
 				$clean['gumlet_workspace_id'] = '';
 			} elseif ( self::is_valid_hex24( $ws ) ) {
 				$clean['gumlet_workspace_id'] = $ws;
 			} else {
-				$clean['gumlet_workspace_id'] = isset( $existing['gumlet_workspace_id'] ) && self::is_valid_hex24( (string) $existing['gumlet_workspace_id'] )
-					? strtolower( (string) $existing['gumlet_workspace_id'] )
+				$clean['gumlet_workspace_id'] = isset( $existing['gumlet_workspace_id'] ) && self::is_valid_hex24( self::scalar_str( $existing['gumlet_workspace_id'] ) )
+					? strtolower( self::scalar_str( $existing['gumlet_workspace_id'] ) )
 					: '';
 				if ( function_exists( 'add_settings_error' ) ) {
 					add_settings_error(
@@ -378,26 +451,30 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 
 			if ( ! empty( $input['clear_gumlet_api_key'] ) ) {
 				$clean['gumlet_api_key'] = '';
-			} elseif ( isset( $input['gumlet_api_key'] ) && '' !== trim( (string) $input['gumlet_api_key'] ) ) {
-				$clean['gumlet_api_key'] = trim( sanitize_text_field( (string) $input['gumlet_api_key'] ) );
+			} elseif ( isset( $input['gumlet_api_key'] ) && '' !== trim( self::scalar_str( $input['gumlet_api_key'] ) ) ) {
+				$clean['gumlet_api_key'] = trim( sanitize_text_field( self::scalar_str( $input['gumlet_api_key'] ) ) );
 			} else {
-				$clean['gumlet_api_key'] = isset( $existing['gumlet_api_key'] ) ? (string) $existing['gumlet_api_key'] : '';
+				$clean['gumlet_api_key'] = isset( $existing['gumlet_api_key'] ) ? self::scalar_str( $existing['gumlet_api_key'] ) : '';
 			}
 
 			$clean['privacy_mode'] = ! empty( $input['privacy_mode'] ) ? 1 : 0;
 
 			$clean['brand_name'] = isset( $input['brand_name'] )
-				? sanitize_text_field( trim( (string) $input['brand_name'] ) )
+				? sanitize_text_field( trim( self::scalar_str( $input['brand_name'] ) ) )
 				: '';
 
-			$accent                = isset( $input['accent_color'] ) ? sanitize_hex_color( (string) $input['accent_color'] ) : '';
+			$accent                = isset( $input['accent_color'] ) ? sanitize_hex_color( self::scalar_str( $input['accent_color'] ) ) : '';
 			$clean['accent_color'] = $accent ? $accent : '#FF5500';
 
 			$slot                  = isset( $input['default_slot'] ) ? absint( $input['default_slot'] ) : 2;
 			$clean['default_slot'] = max( 1, min( 20, $slot ) );
 
-			$yt_url                       = isset( $input['youtube_channel_url'] ) ? trim( (string) $input['youtube_channel_url'] ) : '';
-			$clean['youtube_channel_url'] = '' !== $yt_url ? esc_url_raw( $yt_url ) : '';
+			$yt_url                       = isset( $input['youtube_channel_url'] ) ? trim( self::scalar_str( $input['youtube_channel_url'] ) ) : '';
+			$clean_yt                     = '' !== $yt_url ? esc_url_raw( $yt_url, array( 'http', 'https' ) ) : '';
+			$yt_parts                     = '' !== $clean_yt ? wp_parse_url( $clean_yt ) : false;
+			$clean['youtube_channel_url'] = ( is_array( $yt_parts ) && in_array( strtolower( (string) ( $yt_parts['scheme'] ?? '' ) ), array( 'http', 'https' ), true ) )
+				? $clean_yt
+				: '';
 
 			return $clean;
 		}
@@ -662,8 +739,16 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			if ( preg_match( '/^(?:#|wp:|attachment:)?(\d+)$/i', $raw, $m ) ) {
 				$att_id = (int) $m[1];
 				$att    = function_exists( 'get_post' ) ? get_post( $att_id ) : null;
-				$url    = function_exists( 'wp_get_attachment_url' ) ? (string) wp_get_attachment_url( $att_id ) : '';
-				$ext    = self::get_attachment_external_url( $att_id );
+				if ( ! $att || 'attachment' !== ( $att->post_type ?? '' ) || 'trash' === ( $att->post_status ?? '' ) || ! self::current_user_can_read_post( $att_id ) ) {
+					return array(
+						'ok'          => false,
+						'source_type' => '',
+						'error'       => __( 'Video attachment not found or inaccessible.', 'world-inspire-video-gallery-for-gumlet' ),
+					);
+				}
+
+				$url = function_exists( 'wp_get_attachment_url' ) ? (string) wp_get_attachment_url( $att_id ) : '';
+				$ext = self::get_attachment_external_url( $att_id );
 				if ( $ext ) {
 					$asset_id  = self::get_attachment_gumlet_asset_id( $att_id );
 					$ext_parts = wp_parse_url( $ext );
@@ -678,31 +763,31 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 						'asset_id'      => $asset_id,
 						'workspace_id'  => $ext_ws,
 						'url'           => $ext,
-						'title'         => $att ? (string) $att->post_title : '',
+						'title'         => (string) $att->post_title,
 						'error'         => '',
 					);
 				}
-				if ( $att && 'attachment' === ( $att->post_type ?? '' ) ) {
-					$mime = (string) ( $att->post_mime_type ?? '' );
-					if ( '' !== $mime && 0 !== strpos( $mime, 'video/' ) ) {
-						return array(
-							'ok'          => false,
-							'source_type' => '',
-							'error'       => sprintf(
-								/* translators: 1: attachment ID, 2: MIME type */
-								__( 'Attachment #%1$d is not a video attachment (mime: %2$s).', 'world-inspire-video-gallery-for-gumlet' ),
-								$att_id,
-								$mime
-							),
-						);
-					}
+
+				$mime = (string) ( $att->post_mime_type ?? '' );
+				if ( '' === $mime || 0 !== strpos( $mime, 'video/' ) || '' === $url ) {
+					return array(
+						'ok'          => false,
+						'source_type' => '',
+						'error'       => sprintf(
+							/* translators: 1: attachment ID, 2: MIME type */
+							__( 'Attachment #%1$d is not a video attachment (mime: %2$s).', 'world-inspire-video-gallery-for-gumlet' ),
+							$att_id,
+							'' !== $mime ? $mime : 'unknown'
+						),
+					);
 				}
+
 				return array(
 					'ok'            => true,
 					'source_type'   => 'mp4',
 					'attachment_id' => $att_id,
 					'url'           => $url,
-					'title'         => $att ? (string) $att->post_title : '',
+					'title'         => (string) $att->post_title,
 					'error'         => '',
 				);
 			}
@@ -853,6 +938,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			// 7. Direct MP4 URL (on current site or external HTTPS MP4)
 			if ( preg_match( '/\.mp4$/i', $path ) && ( $parts['scheme'] ?? '' ) === 'https' ) {
 				$att_id = function_exists( 'attachment_url_to_postid' ) ? (int) attachment_url_to_postid( $raw ) : 0;
+				if ( $att_id > 0 && ! self::is_accessible_attachment( $att_id, 'video/' ) ) {
+					$att_id = 0;
+				}
 				return array(
 					'ok'            => true,
 					'source_type'   => 'mp4',
@@ -986,7 +1074,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				$vid_att_id = (int) ( $entry['upload_video_id'] ?? 0 );
 				$vid_url    = (string) ( $entry['upload_video_url'] ?? '' );
 				if ( $vid_att_id > 0 && '' === $vid_url && function_exists( 'wp_get_attachment_url' ) ) {
-					$vid_url = (string) wp_get_attachment_url( $vid_att_id );
+					if ( ! function_exists( 'get_post_status' ) || 'trash' !== get_post_status( $vid_att_id ) ) {
+						$vid_url = (string) wp_get_attachment_url( $vid_att_id );
+					}
 				}
 				if ( '' !== $vid_url ) {
 					$attrs = 'class="wivg-wc-gallery-video" src="' . esc_url( $vid_url ) . '" playsinline loop controls';
@@ -1044,15 +1134,27 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				$mb   = ( $file && false === strpos( $file, 'gumlet-cdn/' ) && file_exists( $file ) && is_readable( $file ) )
 					? number_format( filesize( $file ) / 1048576, 1 ) . ' MB'
 					: __( 'Local MP4', 'world-inspire-video-gallery-for-gumlet' );
-				echo '<a class="wivg-badge-warn" href="' . esc_url( admin_url( 'upload.php?page=' . self::ADMIN_SLUG . '&tab=inventory' ) ) . '">'
-					. esc_html(
-						sprintf(
-							/* translators: %s: file size or label */
-							__( 'Local (%s)', 'world-inspire-video-gallery-for-gumlet' ),
-							$mb
+				if ( function_exists( 'current_user_can' ) && current_user_can( 'manage_options' ) ) {
+					echo '<a class="wivg-badge-warn" href="' . esc_url( admin_url( 'upload.php?page=' . self::ADMIN_SLUG . '&tab=inventory' ) ) . '">'
+						. esc_html(
+							sprintf(
+								/* translators: %s: file size or label */
+								__( 'Local (%s)', 'world-inspire-video-gallery-for-gumlet' ),
+								$mb
+							)
 						)
-					)
-					. '</a>';
+						. '</a>';
+				} else {
+					echo '<span class="wivg-badge-warn">'
+						. esc_html(
+							sprintf(
+								/* translators: %s: file size or label */
+								__( 'Local (%s)', 'world-inspire-video-gallery-for-gumlet' ),
+								$mb
+							)
+						)
+						. '</span>';
+				}
 			}
 		}
 
@@ -1110,9 +1212,33 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			$created = false;
 			if ( 0 === $id && $target_attachment_id > 0 ) {
 				$target = get_post( (int) $target_attachment_id );
-				if ( $target && 'attachment' === $target->post_type ) {
+				if ( $target && 'attachment' === $target->post_type && 'trash' !== ( $target->post_status ?? '' ) ) {
 					$id = (int) $target_attachment_id;
 				}
+			}
+
+			if ( $id > 0 ) {
+				if ( ! self::current_user_can_edit_post( $id ) ) {
+					return new WP_Error(
+						'wivg_forbidden',
+						__( 'You do not have permission to update this video attachment.', 'world-inspire-video-gallery-for-gumlet' ),
+						array( 'status' => 403 )
+					);
+				}
+			} elseif ( ! function_exists( 'current_user_can' ) || ( ! current_user_can( 'upload_files' ) && ! current_user_can( 'manage_options' ) ) ) {
+				return new WP_Error(
+					'wivg_forbidden',
+					__( 'You do not have permission to create video attachments.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
+			}
+
+			if ( $poster_id > 0 && ! self::is_accessible_attachment( $poster_id, 'image/' ) ) {
+				return new WP_Error(
+					'wivg_invalid_poster',
+					__( 'Poster attachment not found or inaccessible.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
 			}
 
 			if ( 0 === $id ) {
@@ -1194,6 +1320,13 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			);
 			if ( ! empty( $existing ) ) {
 				$aid = (int) $existing[0];
+				if ( ! self::current_user_can_read_post( $aid ) ) {
+					return new WP_Error(
+						'wivg_forbidden',
+						__( 'You do not have permission to access this poster attachment.', 'world-inspire-video-gallery-for-gumlet' ),
+						array( 'status' => 403 )
+					);
+				}
 				return array(
 					'ok'                   => true,
 					'source_type'          => 'youtube',
@@ -1206,6 +1339,14 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				);
 			}
 
+			if ( ! function_exists( 'current_user_can' ) || ( ! current_user_can( 'upload_files' ) && ! current_user_can( 'manage_options' ) ) ) {
+				return new WP_Error(
+					'wivg_forbidden',
+					__( 'You do not have permission to upload poster images.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
+			}
+
 			$candidates = array(
 				'https://i.ytimg.com/vi/' . rawurlencode( $video_id ) . '/maxresdefault.jpg',
 				'https://i.ytimg.com/vi/' . rawurlencode( $video_id ) . '/hqdefault.jpg',
@@ -1214,10 +1355,13 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			foreach ( $candidates as $candidate_url ) {
 				$resp = wp_safe_remote_get( $candidate_url, array( 'timeout' => 12 ) );
 				if ( ! is_wp_error( $resp ) && 200 === (int) wp_remote_retrieve_response_code( $resp ) ) {
-					$body = (string) wp_remote_retrieve_body( $resp );
-					if ( strlen( $body ) > 1000 ) {
-						$img_bytes = $body;
-						break;
+					$ctype = strtolower( (string) wp_remote_retrieve_header( $resp, 'content-type' ) );
+					$body  = (string) wp_remote_retrieve_body( $resp );
+					if ( strlen( $body ) > 1000 && ( '' === $ctype || 0 === strpos( $ctype, 'image/' ) ) ) {
+						if ( ! function_exists( 'getimagesizefromstring' ) || false !== @getimagesizefromstring( $body ) ) {
+							$img_bytes = $body;
+							break;
+						}
 					}
 				}
 			}
@@ -1339,7 +1483,11 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			$pid     = (int) $post->ID;
 
 			if ( 'surecart' === $adapter ) {
-				$mp  = json_decode( wp_json_encode( get_post_meta( $pid, 'product', true ) ), true );
+				$raw_mp = get_post_meta( $pid, 'product', true );
+				$mp     = ( is_array( $raw_mp ) || is_object( $raw_mp ) ) ? json_decode( wp_json_encode( $raw_mp ), true ) : array();
+				if ( ! is_array( $mp ) ) {
+					$mp = array();
+				}
 				$gal = $mp['metadata']['gallery_ids'] ?? array();
 				if ( is_string( $gal ) ) {
 					$gal = json_decode( $gal, true );
@@ -1588,6 +1736,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			$attached_video_ids   = array();
 
 			foreach ( $posts as $p ) {
+				if ( ! self::current_user_can_read_post( $p->ID ) ) {
+					continue;
+				}
 				$item = self::inspect_product( $p );
 				if ( ! $item ) {
 					continue;
@@ -1635,7 +1786,10 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			$total_local_bytes = 0;
 
 			foreach ( $video_posts as $vp ) {
-				$vid     = (int) $vp->ID;
+				$vid = (int) $vp->ID;
+				if ( ! self::current_user_can_read_post( $vid ) ) {
+					continue;
+				}
 				$ext_url = self::get_attachment_external_url( $vid );
 				$meta    = wp_get_attachment_metadata( $vid );
 				$width   = is_array( $meta ) ? (int) ( $meta['width'] ?? 0 ) : 0;
@@ -1786,31 +1940,45 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		public static function insert_product_video( $params ) {
 			$cfg      = self::get_settings();
 			$prod_ref = $params['product_id'] ?? ( $params['product'] ?? '' );
-			$post     = self::resolve_product( $prod_ref );
+			$post     = self::resolve_product( is_scalar( $prod_ref ) ? $prod_ref : '' );
 			if ( ! $post ) {
 				return new WP_Error(
 					'wivg_product_not_found',
 					sprintf(
 						/* translators: %s: product reference */
 						__( 'Product "%s" not found.', 'world-inspire-video-gallery-for-gumlet' ),
-						sanitize_text_field( (string) $prod_ref )
+						sanitize_text_field( self::scalar_str( $prod_ref ) )
 					),
 					array( 'status' => 404 )
 				);
 			}
-			$pid    = (int) $post->ID;
-			$parsed = self::parse_video_input( (string) ( $params['video'] ?? '' ) );
+			$pid = (int) $post->ID;
+			if ( ! self::current_user_can_edit_post( $pid ) ) {
+				return new WP_Error(
+					'wivg_forbidden',
+					__( 'You do not have permission to edit this product.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
+			}
+
+			$video_raw = sanitize_text_field( self::scalar_str( $params['video'] ?? '' ) );
+			$parsed    = self::parse_video_input( $video_raw );
 			if ( ! $parsed['ok'] ) {
 				return new WP_Error( 'wivg_invalid_video', $parsed['error'], array( 'status' => 422 ) );
 			}
 
 			$adapter      = self::detect_adapter();
-			$target_slot  = max( 1, (int) ( $params['slot'] ?? $cfg['default_slot'] ) );
-			$mode         = strtolower( (string) ( $params['mode'] ?? 'auto' ) );
-			$autoplay     = isset( $params['autoplay'] ) ? ( (bool) $params['autoplay'] && '0' !== (string) $params['autoplay'] ? '1' : '0' ) : '1';
-			$audio_status = isset( $params['audio_status'] ) ? ( in_array( $params['audio_status'], array( 'mute', 'unmute' ), true ) ? $params['audio_status'] : 'mute' ) : 'mute';
-			$video_size   = isset( $params['video_size'] ) && in_array( $params['video_size'], array( 'contain', 'cover' ), true ) ? $params['video_size'] : 'contain';
-			$video_ctrl   = isset( $params['video_control'] ) && in_array( $params['video_control'], array( 'theme', 'native' ), true ) ? $params['video_control'] : 'theme';
+			$target_slot  = max( 1, absint( $params['slot'] ?? $cfg['default_slot'] ) );
+			$mode         = strtolower( self::scalar_str( $params['mode'] ?? 'auto', 'auto' ) );
+			$autoplay_raw = self::scalar_str( $params['autoplay'] ?? '' );
+			$autoplay     = isset( $params['autoplay'] ) ? ( (bool) $params['autoplay'] && '0' !== $autoplay_raw ? '1' : '0' ) : '1';
+			$audio_raw    = self::scalar_str( $params['audio_status'] ?? 'mute', 'mute' );
+			$audio_status = isset( $params['audio_status'] ) ? ( in_array( $audio_raw, array( 'mute', 'unmute' ), true ) ? $audio_raw : 'mute' ) : 'mute';
+			$size_raw     = self::scalar_str( $params['video_size'] ?? 'contain', 'contain' );
+			$video_size   = isset( $params['video_size'] ) && in_array( $size_raw, array( 'contain', 'cover' ), true ) ? $size_raw : 'contain';
+			$ctrl_raw     = self::scalar_str( $params['video_control'] ?? 'theme', 'theme' );
+			$video_ctrl   = isset( $params['video_control'] ) && in_array( $ctrl_raw, array( 'theme', 'native' ), true ) ? $ctrl_raw : 'theme';
+			$title_param  = sanitize_text_field( self::scalar_str( $params['title'] ?? '' ) );
 
 			if ( 'surecart' === $adapter ) {
 				$vid_att_id = (int) ( $parsed['attachment_id'] ?? 0 );
@@ -1818,7 +1986,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 					$up = self::upsert_gumlet_attachment(
 						$parsed['asset_id'],
 						$parsed['url'],
-						(string) ( $params['title'] ?? ( $post->post_title . ' Video' ) )
+						'' !== $title_param ? $title_param : ( $post->post_title . ' Video' )
 					);
 					if ( is_wp_error( $up ) ) {
 						return $up;
@@ -1832,8 +2000,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 						array( 'status' => 422 )
 					);
 				}
-				$mp = json_decode( wp_json_encode( get_post_meta( $pid, 'product', true ) ), true );
-				if ( ! is_array( $mp ) ) {
+				$raw_mp = get_post_meta( $pid, 'product', true );
+				$mp     = ( is_array( $raw_mp ) || is_object( $raw_mp ) ) ? json_decode( wp_json_encode( $raw_mp ), true ) : array();
+				if ( ! is_array( $mp ) || empty( $mp ) ) {
 					return new WP_Error( 'wivg_surecart_meta_missing', __( 'SureCart product metadata not found.', 'world-inspire-video-gallery-for-gumlet' ), array( 'status' => 500 ) );
 				}
 				$gal = $mp['metadata']['gallery_ids'] ?? array();
@@ -1881,10 +2050,10 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 
 			if ( ! empty( $params['gallery_append_ids'] ) ) {
 				$extra = is_array( $params['gallery_append_ids'] )
-					? array_map( 'intval', $params['gallery_append_ids'] )
-					: array_map( 'intval', explode( ',', (string) $params['gallery_append_ids'] ) );
+					? array_map( 'absint', $params['gallery_append_ids'] )
+					: array_map( 'absint', explode( ',', self::scalar_str( $params['gallery_append_ids'] ) ) );
 				foreach ( $extra as $eid ) {
-					if ( $eid > 0 && $eid !== $thumb_id && ! in_array( $eid, $gal_ids, true ) ) {
+					if ( $eid > 0 && $eid !== $thumb_id && ! in_array( $eid, $gal_ids, true ) && self::is_accessible_attachment( $eid ) ) {
 						$gal_ids[] = $eid;
 					}
 				}
@@ -1910,7 +2079,22 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				$ordered_ids[] = $gid;
 			}
 
-			$explicit_slide_id = isset( $params['slide_attachment_id'] ) ? (int) $params['slide_attachment_id'] : 0;
+			$explicit_slide_id = isset( $params['slide_attachment_id'] ) ? absint( $params['slide_attachment_id'] ) : 0;
+			if ( $explicit_slide_id > 0 && ! self::is_accessible_attachment( $explicit_slide_id ) ) {
+				return new WP_Error(
+					'wivg_invalid_slide_attachment',
+					__( 'Slide attachment not found or inaccessible.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
+			}
+			$param_poster_id = isset( $params['poster_id'] ) ? absint( $params['poster_id'] ) : 0;
+			if ( $param_poster_id > 0 && ! self::is_accessible_attachment( $param_poster_id, 'image/' ) ) {
+				return new WP_Error(
+					'wivg_invalid_poster_attachment',
+					__( 'Poster attachment not found or inaccessible.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
+			}
 			$target_slide_id   = 0;
 
 			if ( $explicit_slide_id > 0 ) {
@@ -1935,8 +2119,8 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 						return $poster;
 					}
 					$new_slide_id = (int) $poster['id'];
-				} elseif ( ! empty( $params['poster_id'] ) ) {
-					$new_slide_id = (int) $params['poster_id'];
+				} elseif ( $param_poster_id > 0 ) {
+					$new_slide_id = $param_poster_id;
 				} elseif ( ! empty( $parsed['attachment_id'] ) ) {
 					$att_poster = (int) get_post_meta( (int) $parsed['attachment_id'], self::META_POSTER_ID, true );
 					if ( $att_poster <= 0 && function_exists( 'get_post_thumbnail_id' ) ) {
@@ -2015,7 +2199,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 					$up = self::upsert_gumlet_attachment(
 						$parsed['asset_id'],
 						$parsed['url'],
-						(string) ( $params['title'] ?? ( $post->post_title . ' Video' ) )
+						'' !== $title_param ? $title_param : ( $post->post_title . ' Video' )
 					);
 					if ( is_wp_error( $up ) ) {
 						return $up;
@@ -2068,23 +2252,31 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		 */
 		public static function arrange_product_gallery( $params ) {
 			$prod_ref = $params['product_id'] ?? ( $params['product'] ?? '' );
-			$post     = self::resolve_product( $prod_ref );
+			$post     = self::resolve_product( is_scalar( $prod_ref ) ? $prod_ref : '' );
 			if ( ! $post ) {
 				return new WP_Error(
 					'wivg_product_not_found',
 					sprintf(
 						/* translators: %s: product reference */
 						__( 'Product "%s" not found.', 'world-inspire-video-gallery-for-gumlet' ),
-						sanitize_text_field( (string) $prod_ref )
+						sanitize_text_field( self::scalar_str( $prod_ref ) )
 					),
 					array( 'status' => 404 )
 				);
 			}
-			$pid     = (int) $post->ID;
+			$pid = (int) $post->ID;
+			if ( ! self::current_user_can_edit_post( $pid ) ) {
+				return new WP_Error(
+					'wivg_forbidden',
+					__( 'You do not have permission to edit this product.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
+			}
 			$adapter = self::detect_adapter();
 
 			if ( 'surecart' === $adapter ) {
-				$mp = json_decode( wp_json_encode( get_post_meta( $pid, 'product', true ) ), true );
+				$raw_mp = get_post_meta( $pid, 'product', true );
+				$mp     = ( is_array( $raw_mp ) || is_object( $raw_mp ) ) ? json_decode( wp_json_encode( $raw_mp ), true ) : array();
 				if ( ! is_array( $mp ) ) {
 					$mp = array( 'metadata' => array() );
 				}
@@ -2111,16 +2303,27 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 
 				if ( ! empty( $params['slot_order'] ) ) {
 					$new_order = is_array( $params['slot_order'] )
-						? array_values( array_unique( array_filter( array_map( 'intval', $params['slot_order'] ) ) ) )
-						: array_values( array_unique( array_filter( array_map( 'intval', explode( ',', (string) $params['slot_order'] ) ) ) ) );
+						? array_values( array_unique( array_filter( array_map( 'absint', $params['slot_order'] ) ) ) )
+						: array_values( array_unique( array_filter( array_map( 'absint', explode( ',', self::scalar_str( $params['slot_order'] ) ) ) ) ) );
 					if ( ! empty( $new_order ) ) {
+						foreach ( $new_order as $aid ) {
+							if ( ! self::is_accessible_attachment( $aid ) ) {
+								return new WP_Error(
+									'wivg_invalid_slot_order',
+									__( 'Slot order contains an invalid or inaccessible attachment ID.', 'world-inspire-video-gallery-for-gumlet' ),
+									array( 'status' => 422 )
+								);
+							}
+						}
 						$ordered = $new_order;
 					}
 				}
 
-				if ( ! empty( $params['move_video_from_slot'] ) && ! empty( $params['move_video_to_slot'] ) ) {
-					$from_idx = (int) $params['move_video_from_slot'] - 1;
-					$to_idx   = (int) $params['move_video_to_slot'] - 1;
+				$move_from = absint( $params['move_video_from_slot'] ?? 0 );
+				$move_to   = absint( $params['move_video_to_slot'] ?? 0 );
+				if ( $move_from >= 1 && $move_to >= 1 ) {
+					$from_idx = $move_from - 1;
+					$to_idx   = $move_to - 1;
 					if ( isset( $ordered[ $from_idx ] ) && $from_idx !== $to_idx ) {
 						$moved = $ordered[ $from_idx ];
 						array_splice( $ordered, $from_idx, 1 );
@@ -2129,6 +2332,8 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 					}
 				}
 
+				$rm_slot = absint( $params['remove_slot'] ?? 0 );
+				$rm_aid  = absint( $params['remove_attachment_id'] ?? 0 );
 				if ( ! empty( $params['clear_all_videos'] ) ) {
 					$ordered = array_values(
 						array_filter(
@@ -2138,13 +2343,12 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 							}
 						)
 					);
-				} elseif ( ! empty( $params['remove_slot'] ) ) {
-					$rm_idx = (int) $params['remove_slot'] - 1;
+				} elseif ( $rm_slot >= 1 ) {
+					$rm_idx = $rm_slot - 1;
 					if ( isset( $ordered[ $rm_idx ] ) ) {
 						array_splice( $ordered, $rm_idx, 1 );
 					}
-				} elseif ( ! empty( $params['remove_attachment_id'] ) ) {
-					$rm_aid  = (int) $params['remove_attachment_id'];
+				} elseif ( $rm_aid >= 1 ) {
 					$ordered = array_values( array_diff( $ordered, array( $rm_aid ) ) );
 				}
 
@@ -2187,9 +2391,18 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 
 			if ( ! empty( $params['slot_order'] ) ) {
 				$new_order = is_array( $params['slot_order'] )
-					? array_values( array_unique( array_filter( array_map( 'intval', $params['slot_order'] ) ) ) )
-					: array_values( array_unique( array_filter( array_map( 'intval', explode( ',', (string) $params['slot_order'] ) ) ) ) );
+					? array_values( array_unique( array_filter( array_map( 'absint', $params['slot_order'] ) ) ) )
+					: array_values( array_unique( array_filter( array_map( 'absint', explode( ',', self::scalar_str( $params['slot_order'] ) ) ) ) ) );
 				if ( ! empty( $new_order ) ) {
+					foreach ( $new_order as $aid ) {
+						if ( ! self::is_accessible_attachment( $aid ) ) {
+							return new WP_Error(
+								'wivg_invalid_slot_order',
+								__( 'Slot order contains an invalid or inaccessible attachment ID.', 'world-inspire-video-gallery-for-gumlet' ),
+								array( 'status' => 422 )
+							);
+						}
+					}
 					$ordered  = $new_order;
 					$thumb_id = $ordered[0];
 					set_post_thumbnail( $pid, $thumb_id );
@@ -2199,9 +2412,11 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				update_post_meta( $pid, '_product_image_gallery', implode( ',', array_slice( $ordered, 1 ) ) );
 			}
 
-			if ( ! empty( $params['move_video_from_slot'] ) && ! empty( $params['move_video_to_slot'] ) ) {
-				$from_idx = (int) $params['move_video_from_slot'] - 1;
-				$to_idx   = (int) $params['move_video_to_slot'] - 1;
+			$move_from = absint( $params['move_video_from_slot'] ?? 0 );
+			$move_to   = absint( $params['move_video_to_slot'] ?? 0 );
+			if ( $move_from >= 1 && $move_to >= 1 ) {
+				$from_idx = $move_from - 1;
+				$to_idx   = $move_to - 1;
 				if ( isset( $ordered[ $from_idx ], $ordered[ $to_idx ] ) && $from_idx !== $to_idx ) {
 					$from_aid = $ordered[ $from_idx ];
 					$to_aid   = $ordered[ $to_idx ];
@@ -2213,36 +2428,41 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				}
 			}
 
+			$rm_slot = absint( $params['remove_slot'] ?? 0 );
+			$rm_aid  = absint( $params['remove_attachment_id'] ?? 0 );
 			if ( ! empty( $params['clear_all_videos'] ) ) {
 				$wm_meta = array();
-			} elseif ( ! empty( $params['remove_slot'] ) ) {
-				$rm_idx = (int) $params['remove_slot'] - 1;
+			} elseif ( $rm_slot >= 1 ) {
+				$rm_idx = $rm_slot - 1;
 				if ( isset( $ordered[ $rm_idx ] ) ) {
 					$rm_aid = $ordered[ $rm_idx ];
 					unset( $wm_meta[ $rm_aid ], $wm_meta[ (string) $rm_aid ] );
 				}
-			} elseif ( ! empty( $params['remove_attachment_id'] ) ) {
-				$rm_aid = (int) $params['remove_attachment_id'];
+			} elseif ( $rm_aid >= 1 ) {
 				unset( $wm_meta[ $rm_aid ], $wm_meta[ (string) $rm_aid ] );
 			}
 
-			if ( ! empty( $params['update_slot'] ) ) {
-				$up_idx = (int) $params['update_slot'] - 1;
+			$up_slot = absint( $params['update_slot'] ?? 0 );
+			if ( $up_slot >= 1 ) {
+				$up_idx = $up_slot - 1;
 				if ( isset( $ordered[ $up_idx ] ) ) {
 					$up_aid = $ordered[ $up_idx ];
 					$entry  = $wm_meta[ $up_aid ] ?? ( $wm_meta[ (string) $up_aid ] ?? null );
 					if ( is_array( $entry ) ) {
 						if ( isset( $params['autoplay'] ) ) {
-							$entry['autoplay'] = ( (bool) $params['autoplay'] && '0' !== (string) $params['autoplay'] ) ? '1' : '0';
+							$entry['autoplay'] = ( (bool) $params['autoplay'] && '0' !== self::scalar_str( $params['autoplay'] ) ) ? '1' : '0';
 						}
-						if ( isset( $params['audio_status'] ) && in_array( $params['audio_status'], array( 'mute', 'unmute' ), true ) ) {
-							$entry['audio_status'] = $params['audio_status'];
+						$audio_raw = self::scalar_str( $params['audio_status'] ?? '' );
+						if ( '' !== $audio_raw && in_array( $audio_raw, array( 'mute', 'unmute' ), true ) ) {
+							$entry['audio_status'] = $audio_raw;
 						}
-						if ( isset( $params['video_size'] ) && in_array( $params['video_size'], array( 'contain', 'cover' ), true ) ) {
-							$entry['video_size'] = $params['video_size'];
+						$size_raw = self::scalar_str( $params['video_size'] ?? '' );
+						if ( '' !== $size_raw && in_array( $size_raw, array( 'contain', 'cover' ), true ) ) {
+							$entry['video_size'] = $size_raw;
 						}
-						if ( isset( $params['video_control'] ) && in_array( $params['video_control'], array( 'theme', 'native' ), true ) ) {
-							$entry['video_control'] = $params['video_control'];
+						$ctrl_raw = self::scalar_str( $params['video_control'] ?? '' );
+						if ( '' !== $ctrl_raw && in_array( $ctrl_raw, array( 'theme', 'native' ), true ) ) {
+							$entry['video_control'] = $ctrl_raw;
 						}
 						$wm_meta[ $up_aid ] = $entry;
 					}
@@ -2276,6 +2496,13 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		 * Prune empty default WoodMart stub entries across all products on the site.
 		 */
 		public static function prune_all_empty_stubs( $flush = true ) {
+			if ( ! function_exists( 'current_user_can' ) || ! current_user_can( 'manage_options' ) ) {
+				return new WP_Error(
+					'wivg_forbidden',
+					__( 'You do not have permission to prune video stubs across products.', 'world-inspire-video-gallery-for-gumlet' ),
+					array( 'status' => 403 )
+				);
+			}
 			$posts            = get_posts(
 				array(
 					'post_type'      => 'product',
@@ -2288,7 +2515,10 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			$cleaned_products = 0;
 			$removed_entries  = 0;
 			foreach ( $posts as $pid ) {
-				$pid     = (int) $pid;
+				$pid = (int) $pid;
+				if ( ! self::current_user_can_edit_post( $pid ) ) {
+					continue;
+				}
 				$wm_meta = get_post_meta( $pid, 'woodmart_wc_video_gallery', true );
 				if ( ! is_array( $wm_meta ) || empty( $wm_meta ) ) {
 					continue;
@@ -2362,7 +2592,11 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 						'playback' => array(
 							'reachable'   => $reachable,
 							'http_status' => $code,
-							'error'       => $reachable ? '' : sprintf( 'YouTube oEmbed returned HTTP %d', $code ),
+							'error'       => $reachable ? '' : sprintf(
+								/* translators: %d: HTTP status code */
+								__( 'YouTube oEmbed returned HTTP %d', 'world-inspire-video-gallery-for-gumlet' ),
+								$code
+							),
 						),
 						'metadata' => $meta,
 					)
@@ -2397,16 +2631,24 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 			if ( preg_match( '#/(\d+)$#', $range, $m ) ) {
 				$total = (int) $m[1];
 			}
-			$ok = in_array( $code, array( 200, 206 ), true );
+			$ok       = in_array( $code, array( 200, 206 ), true );
+			$found_id = 'gumlet' === $parsed['source_type'] ? self::find_gumlet_attachment( $parsed['asset_id'] ) : (int) ( $parsed['attachment_id'] ?? 0 );
+			if ( $found_id > 0 && ! self::current_user_can_read_post( $found_id ) ) {
+				$found_id = 0;
+			}
 			return array_merge(
 				$parsed,
 				array(
-					'existing_attachment' => 'gumlet' === $parsed['source_type'] ? self::find_gumlet_attachment( $parsed['asset_id'] ) : ( $parsed['attachment_id'] ?? 0 ),
+					'existing_attachment' => $found_id,
 					'playback'            => array(
 						'reachable'   => $ok,
 						'http_status' => $code,
 						'bytes'       => $total,
-						'error'       => $ok ? '' : sprintf( 'HTTP %d', $code ),
+						'error'       => $ok ? '' : sprintf(
+							/* translators: %d: HTTP status code */
+							__( 'HTTP %d', 'world-inspire-video-gallery-for-gumlet' ),
+							$code
+						),
 					),
 				)
 			);
@@ -2424,7 +2666,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 					$cfg['brand_name']
 				),
 				__( 'Video Gallery', 'world-inspire-video-gallery-for-gumlet' ),
-				'upload_files',
+				'manage_options',
 				self::ADMIN_SLUG,
 				array( __CLASS__, 'render_admin_page' )
 			);
@@ -2442,9 +2684,6 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		 * Register REST API routes under world-inspire-video-gallery/v1.
 		 */
 		public static function register_rest_routes() {
-			$can_upload = function () {
-				return current_user_can( 'upload_files' );
-			};
 			$can_manage = function () {
 				return current_user_can( 'manage_options' );
 			};
@@ -2475,7 +2714,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/audit',
 				array(
 					'methods'             => WP_REST_Server::READABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function () {
 						return new WP_REST_Response( self::build_audit_report(), 200 );
 					},
@@ -2488,9 +2727,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/probe',
 				array(
 					'methods'             => WP_REST_Server::CREATABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function ( $request ) {
-						$res = self::probe_video_input( sanitize_text_field( (string) $request->get_param( 'input' ) ) );
+						$res = self::probe_video_input( sanitize_text_field( self::scalar_str( $request->get_param( 'input' ) ) ) );
 						if ( is_wp_error( $res ) ) {
 							return $res;
 						}
@@ -2505,10 +2744,17 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/create',
 				array(
 					'methods'             => WP_REST_Server::CREATABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function ( $request ) {
-						$input  = sanitize_text_field( (string) ( $request->get_param( 'input' ) ?: $request->get_param( 'url' ) ?: $request->get_param( 'asset_id' ) ) );
-						$title  = sanitize_text_field( (string) $request->get_param( 'title' ) );
+						$raw_in = self::scalar_str( $request->get_param( 'input' ) );
+						if ( '' === $raw_in ) {
+							$raw_in = self::scalar_str( $request->get_param( 'url' ) );
+						}
+						if ( '' === $raw_in ) {
+							$raw_in = self::scalar_str( $request->get_param( 'asset_id' ) );
+						}
+						$input  = sanitize_text_field( $raw_in );
+						$title  = sanitize_text_field( self::scalar_str( $request->get_param( 'title' ) ) );
 						$parsed = self::parse_video_input( $input );
 						if ( ! $parsed['ok'] ) {
 							return new WP_Error( 'wivg_invalid_input', $parsed['error'], array( 'status' => 422 ) );
@@ -2520,7 +2766,8 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 								$title,
 								absint( $request->get_param( 'width' ) ),
 								absint( $request->get_param( 'height' ) ),
-								absint( $request->get_param( 'poster_id' ) )
+								absint( $request->get_param( 'poster_id' ) ),
+								! empty( $parsed['attachment_id'] ) ? absint( $parsed['attachment_id'] ) : 0
 							);
 							if ( is_wp_error( $res ) ) {
 								return $res;
@@ -2556,7 +2803,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/insert',
 				array(
 					'methods'             => WP_REST_Server::CREATABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function ( $request ) {
 						$res = self::insert_product_video( $request->get_params() );
 						if ( is_wp_error( $res ) ) {
@@ -2573,10 +2820,14 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/arrange',
 				array(
 					'methods'             => WP_REST_Server::CREATABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function ( $request ) {
 						if ( $request->get_param( 'prune_all_stubs' ) ) {
-							return new WP_REST_Response( self::prune_all_empty_stubs(), 200 );
+							$prune_res = self::prune_all_empty_stubs();
+							if ( is_wp_error( $prune_res ) ) {
+								return $prune_res;
+							}
+							return new WP_REST_Response( $prune_res, 200 );
 						}
 						$res = self::arrange_product_gallery( $request->get_params() );
 						if ( is_wp_error( $res ) ) {
@@ -2593,18 +2844,21 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/batch',
 				array(
 					'methods'             => WP_REST_Server::CREATABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function ( $request ) {
 						$ops = $request->get_param( 'operations' );
 						if ( ! is_array( $ops ) ) {
 							return new WP_Error( 'wivg_invalid_batch', __( 'operations must be an array.', 'world-inspire-video-gallery-for-gumlet' ), array( 'status' => 422 ) );
+						}
+						if ( count( $ops ) > 500 ) {
+							return new WP_Error( 'wivg_batch_too_large', __( 'Batch operations cannot exceed 500 items per request.', 'world-inspire-video-gallery-for-gumlet' ), array( 'status' => 422 ) );
 						}
 						$results = array();
 						foreach ( $ops as $idx => $op ) {
 							if ( ! is_array( $op ) ) {
 								continue;
 							}
-							$kind                   = strtolower( (string) ( $op['op'] ?? 'insert' ) );
+							$kind                   = strtolower( self::scalar_str( $op['op'] ?? 'insert', 'insert' ) );
 							$op['skip_cache_flush'] = true;
 							$op['skip_inspect']     = true;
 							if ( 'prune_stubs' === $kind ) {
@@ -2650,13 +2904,13 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 							$existing = array();
 						}
 						$payload = $existing;
-						foreach ( array( 'brand_name', 'accent_color', 'youtube_channel_url', 'gumlet_workspace_id', 'gumlet_api_key', 'default_slot', 'privacy_mode' ) as $field ) {
+						foreach ( array( 'brand_name', 'accent_color', 'youtube_channel_url', 'gumlet_workspace_id', 'gumlet_api_key', 'clear_gumlet_api_key', 'default_slot', 'privacy_mode' ) as $field ) {
 							$val = $request->get_param( $field );
-							if ( null !== $val ) {
+							if ( null !== $val && is_scalar( $val ) ) {
 								$payload[ $field ] = $val;
 							}
 						}
-						if ( ! empty( $payload['gumlet_workspace_id'] ) && ! self::is_valid_hex24( (string) $payload['gumlet_workspace_id'] ) ) {
+						if ( ! empty( $payload['gumlet_workspace_id'] ) && ! self::is_valid_hex24( self::scalar_str( $payload['gumlet_workspace_id'] ) ) ) {
 							return new WP_Error(
 								'wivg_invalid_workspace_id',
 								__( 'Gumlet Workspace ID must be a 24-character hexadecimal string.', 'world-inspire-video-gallery-for-gumlet' ),
@@ -2685,7 +2939,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/gumlet/upload-session',
 				array(
 					'methods'             => WP_REST_Server::CREATABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function ( $request ) {
 						$cfg          = self::get_settings();
 						$workspace_id = (string) ( $cfg['gumlet_workspace_id'] ?? '' );
@@ -2696,7 +2950,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 								array( 'status' => 400 )
 							);
 						}
-						$title = sanitize_text_field( (string) $request->get_param( 'title' ) );
+						$title = sanitize_text_field( self::scalar_str( $request->get_param( 'title' ) ) );
 						$resp  = self::gumlet_request(
 							'POST',
 							'/video/assets/upload',
@@ -2739,9 +2993,9 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 				'/gumlet/status',
 				array(
 					'methods'             => WP_REST_Server::READABLE,
-					'permission_callback' => $can_upload,
+					'permission_callback' => $can_manage,
 					'callback'            => function ( $request ) {
-						$asset_id = strtolower( trim( sanitize_text_field( (string) $request->get_param( 'asset_id' ) ) ) );
+						$asset_id = strtolower( trim( sanitize_text_field( self::scalar_str( $request->get_param( 'asset_id' ) ) ) ) );
 						if ( ! self::is_valid_hex24( $asset_id ) ) {
 							return new WP_Error( 'wivg_invalid_asset_id', __( 'asset_id must be a 24-character hex string.', 'world-inspire-video-gallery-for-gumlet' ), array( 'status' => 422 ) );
 						}
@@ -2771,15 +3025,23 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 							'url'      => $url,
 						);
 						if ( $out['ready'] && $request->get_param( 'auto_register' ) ) {
-							$inp = is_array( $resp['input'] ?? null ) ? $resp['input'] : array();
-							$up  = self::upsert_gumlet_attachment(
+							$inp   = is_array( $resp['input'] ?? null ) ? $resp['input'] : array();
+							$title = sanitize_text_field( self::scalar_str( $request->get_param( 'title' ) ) );
+							if ( '' === $title && ! empty( $inp['title'] ) ) {
+								$title = sanitize_text_field( self::scalar_str( $inp['title'] ) );
+							}
+							$up = self::upsert_gumlet_attachment(
 								$asset_id,
 								$url,
-								sanitize_text_field( (string) ( $request->get_param( 'title' ) ?: ( $inp['title'] ?? '' ) ) ),
+								$title,
 								(int) ( $inp['width'] ?? 0 ),
 								(int) ( $inp['height'] ?? 0 )
 							);
-							if ( ! is_wp_error( $up ) ) {
+							if ( is_wp_error( $up ) ) {
+								if ( 'wivg_forbidden' === $up->get_error_code() ) {
+									return $up;
+								}
+							} else {
 								$out['attachment'] = $up;
 							}
 						}
@@ -2793,13 +3055,14 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 		 * Render Zero-CLI WordPress Admin UI (Media -> Video Gallery) with URL-synced tabs.
 		 */
 		public static function render_admin_page() {
-			if ( ! current_user_can( 'upload_files' ) ) {
+			if ( ! current_user_can( 'manage_options' ) ) {
 				wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'world-inspire-video-gallery-for-gumlet' ) );
 			}
 			$audit        = self::build_audit_report();
 			$site         = $audit['site'];
 			$summary      = $audit['summary'];
 			$rest_base    = esc_url_raw( rest_url( self::REST_NAMESPACE ) );
+			$audit_url    = function_exists( 'wp_nonce_url' ) ? wp_nonce_url( $rest_base . '/audit', 'wp_rest' ) : ( $rest_base . '/audit' );
 			$can_manage   = current_user_can( 'manage_options' );
 			$local_mb     = number_format( ( $summary['local_mp4_bytes'] ?? 0 ) / 1048576, 1 );
 			$default_slot = max( 1, (int) ( $site['default_slot'] ?? 2 ) );
@@ -2837,7 +3100,7 @@ if ( ! class_exists( 'World_Inspire_Video_Gallery' ) ) {
 						<?php if ( $can_manage ) : ?>
 						<a class="wivg-btn wivg-btn-sm" href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Plugin Settings', 'world-inspire-video-gallery-for-gumlet' ); ?></a>
 						<?php endif; ?>
-						<a class="wivg-btn wivg-btn-sm" href="<?php echo esc_url( $rest_base . '/audit' ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'REST Audit JSON', 'world-inspire-video-gallery-for-gumlet' ); ?></a>
+						<a class="wivg-btn wivg-btn-sm" href="<?php echo esc_url( $audit_url ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'REST Audit JSON', 'world-inspire-video-gallery-for-gumlet' ); ?></a>
 					</div>
 				</div>
 
