@@ -3,7 +3,9 @@
 .github/
 .gitignore
 .distignore
+.wp-env.json
 *.zip
+*.log
 assets/
 
 # Testing & build tooling

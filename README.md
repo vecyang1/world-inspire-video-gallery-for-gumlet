@@ -4,6 +4,7 @@
 
 # World Inspire Video Gallery for Gumlet
 
+[![WordPress Plugin Directory](https://img.shields.io/wordpress/plugin/v/world-inspire-video-gallery-for-gumlet?label=WordPress.org)](https://wordpress.org/plugins/world-inspire-video-gallery-for-gumlet/)
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)](LICENSE)
 [![CI & Plugin Check](https://github.com/vecyang1/world-inspire-video-gallery-for-gumlet/actions/workflows/ci-release.yml/badge.svg)](https://github.com/vecyang1/world-inspire-video-gallery-for-gumlet/actions/workflows/ci-release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/vecyang1/world-inspire-video-gallery-for-gumlet)](https://github.com/vecyang1/world-inspire-video-gallery-for-gumlet/releases/latest)
@@ -62,7 +63,7 @@ world-inspire-video-gallery-for-gumlet/
 
 ## Quick Start
 
-1. Download the release ZIP from [Releases](https://github.com/vecyang1/world-inspire-video-gallery-for-gumlet/releases/latest) or clone this repository into `/wp-content/plugins/world-inspire-video-gallery-for-gumlet`.
+1. Install directly from the [WordPress.org Plugin Directory](https://wordpress.org/plugins/world-inspire-video-gallery-for-gumlet/) (**Plugins -> Add New** -> search `World Inspire Video Gallery for Gumlet`), or download the release ZIP from [Releases](https://github.com/vecyang1/world-inspire-video-gallery-for-gumlet/releases/latest).
 2. Activate **World Inspire Video Gallery for Gumlet** in **Plugins**.
 3. Open **Settings -> External Video Gallery** to set optional Gumlet credentials and verify Privacy-Enhanced Mode.
 4. Open **Media -> Video Gallery** to probe URLs, upload MP4s directly to Gumlet, and arrange product gallery slots.
